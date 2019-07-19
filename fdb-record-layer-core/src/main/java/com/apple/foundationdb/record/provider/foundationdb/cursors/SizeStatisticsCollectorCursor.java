@@ -100,8 +100,13 @@ public class SizeStatisticsCollectorCursor implements RecordCursor<SizeStatistic
             try {
                 //if this is a continuation update stats with partial values and get the underlying cursor's continuation
                 RecordCursorProto.SizeStatisticsContinuation statsContinuation = RecordCursorProto.SizeStatisticsContinuation.parseFrom(continuation);
-                this.sizeStatisticsResults.fromProto(statsContinuation.getPartialResults());
-                kvCursorContinuation = statsContinuation.getContinuation().toByteArray(); //underlying KV cursor continues here
+                if (statsContinuation.hasPartialResults()) {
+                    this.sizeStatisticsResults.fromProto(statsContinuation.getPartialResults());
+                    kvCursorContinuation = statsContinuation.getContinuation().toByteArray(); //underlying KV cursor continues here
+                } else {
+                    //otherwise they were returned on a previous iteration
+                    this.finalResultsEmitted = true;
+                }
 
             } catch (InvalidProtocolBufferException ex) {
                 throw new RecordCoreException("Error parsing SizeStatisticsCollectorCursor continuation", ex)
@@ -194,6 +199,7 @@ public class SizeStatisticsCollectorCursor implements RecordCursor<SizeStatistic
     }
 
     //form a continuation that allows us to restart statistics aggregation from where we left off
+    // Note that shis continuation SHOLULD NOT be used to represent an end continuation
     private static class SizeStatisticsCollectorCursorContinuation implements RecordCursorContinuation {
         @Nonnull
         private final RecordCursorResult<KeyValue> currentKvResult;
@@ -217,7 +223,7 @@ public class SizeStatisticsCollectorCursor implements RecordCursor<SizeStatistic
                     return RecordCursorProto.SizeStatisticsContinuation.newBuilder().setPartialResults(this.sizeStatisticsResults.toProto()).setContinuation(ByteString.copyFrom(b)).build();
                 } else {
                     //nothing more to aggregate
-                    return RecordCursorProto.SizeStatisticsContinuation.newBuilder().setContinuation(ByteString.copyFrom(RecordCursorEndContinuation.END.toBytes())).build();
+                    return RecordCursorProto.SizeStatisticsContinuation.newBuilder().build();
                 }
             };
         }
@@ -225,19 +231,16 @@ public class SizeStatisticsCollectorCursor implements RecordCursor<SizeStatistic
         @Nullable
         @Override
         public byte[] toBytes() {
-            if (isEnd()) {
-                return null;
-            } else {
-                //form bytes exactly once
-                if (this.cachedBytes == null) {
-                    this.cachedBytes = continuationFunction.apply(this.currentKvResult.getContinuation().toBytes()).toByteArray();
-                }
-                return cachedBytes;
+            //form bytes exactly once
+            if (this.cachedBytes == null) {
+                this.cachedBytes = continuationFunction.apply(this.currentKvResult.getContinuation().toBytes()).toByteArray();
             }
+            return cachedBytes;
         }
 
         @Override
         @Nonnull
+        //instance of this class do not are NOT meant to represent end continuations
         public boolean isEnd() {
             return false;
         }

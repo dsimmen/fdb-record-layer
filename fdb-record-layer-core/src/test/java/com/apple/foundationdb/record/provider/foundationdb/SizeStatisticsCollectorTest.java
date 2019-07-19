@@ -54,7 +54,9 @@ import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.lessThanOrEqualTo;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Tests of the {@link SizeStatisticsCollector}.
@@ -114,10 +116,12 @@ public class SizeStatisticsCollectorTest extends FDBRecordStoreTestBase {
                 done = batchedCollector.collect(context, executeProperties);
                 iterations += 1;
             }
+
             assertThat(iterations, anyOf(equalTo(recordCount * 2 / 10), equalTo(recordCount * 2 / 10 + 1)));
             assertEquals(statisticsCollector.getKeyCount(), batchedCollector.getKeyCount());
             assertEquals(statisticsCollector.getKeySize(), batchedCollector.getKeySize());
             assertEquals(statisticsCollector.getValueSize(), batchedCollector.getValueSize());
+            assertTrue(batchedCollector.continuation.isEnd());
             commit(context);
         }
 
@@ -347,6 +351,12 @@ public class SizeStatisticsCollectorTest extends FDBRecordStoreTestBase {
                 return statsCursor.forEachResult(nextResult -> {
                     sizeStatsResults = Optional.of(nextResult.get()); //wholesale replacement of initialized version with fully aggregated results
                     continuation = nextResult.getContinuation();
+                    if (!continuation.isEnd()) { //THIS SHOULD NOT BE TRUE BECAUSE WE GOT A VALUE
+                        byte[] b = continuation.toBytes();
+                    }
+                    // NOT THAT AN IS END CURSOR SHOULD BE BE USED TO RESET THE CURSOR AS IT WILL RETURN NULL BYTES AND HENCE START FROM THE BEGGINNING
+                    SizeStatisticsCollectorCursor statsCursor2 = SizeStatisticsCollectorCursor.ofSubspace(subspace, context, scanProperties, continuation.toBytes());
+                    assertFalse(statsCursor2.onNext().join().hasNext());
                 }).handle((result, err) -> {
                     if (err == null) {
                         continuation = result.getContinuation();
